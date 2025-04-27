@@ -1,0 +1,71 @@
+# Unreal Engine project specific ignore patterns
+# Binaries folder
+/Binaries/
+/Plugins/*/Binaries/
+
+# Build folder
+/Build/
+
+# Derived data cache
+/DerivedDataCache/
+
+# Intermediate files
+/Intermediate/
+/Plugins/*/Intermediate/
+
+# Saved folder
+/Saved/
+
+# Content folder exceptions
+# Uncomment if you want to ignore content
+/Content/__ExternalActors__/
+/Content/__ExternalObjects__/
+
+# Visual Studio / Xcode files
+.vs/
+*.opensdf
+*.sdf
+*.sln
+*.suo
+*.xcworkspace
+*.xcodeproj
+*.VC.db
+*.VC.opendb
+*.sln.docstates
+*.xccheckout
+*.xcscmblueprint
+*.pdb
+xcuserdata/
+
+# macOS specific
+.DS_Store
+*.swp
+*~
+._*
+
+# Build system files
+*.obj
+*.dll
+*.exe
+*.lib
+*.a
+*.log
+*.dmp
+
+# Personal settings
+*.uproject.user
+*.target.xml
+RLSimulation.uproject.DotSettings.user
+
+# Debugging and analysis
+*.dtps
+*.diagsession
+Profiling/
+
+# RLSimulation specific (if any)
+# Add any specific files for your project here
+
+# Optional but usually good to ignore
+Config/DefaultEditor.ini.user
+Config/DefaultEngine.ini.user
+Config/DefaultGame.ini.user
