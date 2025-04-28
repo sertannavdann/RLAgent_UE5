@@ -7,17 +7,7 @@
 
 class ARLAgentManager;
 
-
-// Struct to store state information
-USTRUCT(BlueprintType)
-struct FRLState
-{
-    GENERATED_BODY()
-    
-    UPROPERTY(BlueprintReadWrite, Category = "Reinforcement Learning")
-    TArray<float> Features;
-};
-
+// Save game object to cache trained agents
 UCLASS()
 class RLSIMULATION_API URLAgentSaveGame : public USaveGame
 {
@@ -37,7 +27,6 @@ public:
     FString AgentDescription;
 };
 
-// Save game object to cache trained agents
 UCLASS(ClassGroup=RL, meta=(BlueprintSpawnableComponent))
 class RLSIMULATION_API URLAgentComponent : public UActorComponent
 {
@@ -66,7 +55,7 @@ public:
     UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL")
     float CumulativeReward = 0.f;
 
-    /** Agent’s previous world location (for reward calculation) */
+    /** Agent's previous world location (for reward calculation) */
     UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL")
     FVector PreviousLocation;
 

@@ -75,7 +75,7 @@ private:
     float CurrentEpsilon = 1.f;
 
     /** Dimensionality of state features */
-    int32 NumStateFeatures = 4;
+    int32 NumStateFeatures = 6; // Updated to 6 for full 3D
 
     /** Sample the environment to produce a feature vector */
     static TArray<float> GetStateFeatures(const URLAgentComponent* Agent);
@@ -83,13 +83,13 @@ private:
     /** Execute agent Action and return new state */
     static TArray<float> GetNextState(const URLAgentComponent* Agent, int32 Action);
 
-    /** Reward function based on movement toward world origin */
+    /** Reward function based on movement toward target */
     float CalculateReward(const URLAgentComponent* Agent, const TArray<float>& NextState) const;
 
     /** Linear value estimation v(s)=w·x */
     static float ComputeValue(const TArray<float>& Weights, const TArray<float>& State);
 
-    /** One TD(λ) update */
+    /** One TD update */
     void TDUpdate(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const;
     
     static TArray<float> GetPotentialState(const URLAgentComponent* Agent, int32 Action);
