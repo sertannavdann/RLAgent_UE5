@@ -1,8 +1,8 @@
 #include "RLAgentManager.h"
 #include "RLAgentComponent.h"
 #include "DrawDebugHelpers.h"
-#include "Engine/World.h"
-#include "Kismet/KismetMathLibrary.h"
+
+float ARLAgentManager::G_SphereRadius = 500.f;
 
 ARLAgentManager::ARLAgentManager()
 {
@@ -11,7 +11,7 @@ ARLAgentManager::ARLAgentManager()
     // Set up the target object position - this is what agents will look for
     TargetObjectPosition = FVector(FMath::RandRange(-1000.f, 1000.f),
                                   FMath::RandRange(-1000.f, 1000.f),
-                                  0.f);
+                                  FMath::RandRange(-1000.f, 1000.f));
     
     // Sphere radius represents the training area
     SphereRadius = 1500.f;
@@ -23,21 +23,6 @@ ARLAgentManager::ARLAgentManager()
     DiscountFactor = 0.9f;    // Standard discount
 }
 
-int32 ARLAgentManager::RegisterAgent(URLAgentComponent* Agent)
-{
-    Agents.Add(Agent);
-    return Agents.Num() - 1;
-}
-
-void ARLAgentManager::StartTraining()
-{
-    CurrentEpsilon = InitialEpsilon;
-    
-    // Spawn a debug marker at the target position
-    DrawDebugSphere(GetWorld(), TargetObjectPosition, 50.f, 8, FColor::Red, true);
-}
-
-// Respawn the target in a new random position within the sphere
 void ARLAgentManager::RespawnTarget()
 {
     // Clear old target debug markers
@@ -54,6 +39,20 @@ void ARLAgentManager::RespawnTarget()
     );
     
     // Draw the new target
+    DrawDebugSphere(GetWorld(), TargetObjectPosition, 50.f, 8, FColor::Red, true);
+}
+
+int32 ARLAgentManager::RegisterAgent(URLAgentComponent* Agent)
+{
+    Agents.Add(Agent);
+    return Agents.Num() - 1;
+}
+
+void ARLAgentManager::StartTraining()
+{
+    CurrentEpsilon = InitialEpsilon;
+    
+    // Spawn a debug marker at the target position
     DrawDebugSphere(GetWorld(), TargetObjectPosition, 50.f, 8, FColor::Red, true);
 }
 
@@ -133,21 +132,21 @@ void ARLAgentManager::Tick(float DeltaTime)
     DrawDebugSphere(GetWorld(), TargetObjectPosition, 50.f, 8, FColor::Red, false, -1, 0, 5.0f);
 }
 
-TArray<float> ARLAgentManager::GetStateFeatures(URLAgentComponent* Agent)
+TArray<float> ARLAgentManager::GetStateFeatures(const URLAgentComponent* Agent)
 {
     // Simplified state: just position and direction
     FVector Loc = Agent->GetOwner()->GetActorLocation();
     FVector Forward = Agent->GetOwner()->GetActorForwardVector();
 
     return {
-        Loc.X / 1000.f,       // Normalized X position
-        Loc.Y / 1000.f,       // Normalized Y position
-        Forward.X,            // Direction X
-        Forward.Y             // Direction Y
+        static_cast<float>(Loc.X / 1000.f),       // Normalized X position
+        static_cast<float>(Loc.Y / 1000.f),       // Normalized Y position
+        static_cast<float>(Forward.X),            // Direction X
+        static_cast<float>(Forward.Y)             // Direction Y
     };
 }
 
-TArray<float> ARLAgentManager::GetPotentialState(URLAgentComponent* Agent, int32 Action)
+TArray<float> ARLAgentManager::GetPotentialState(const URLAgentComponent* Agent, int32 Action)
 {
     // Get current state without modifying the actor
     FVector CurrentLoc = Agent->GetOwner()->GetActorLocation();
@@ -165,28 +164,43 @@ TArray<float> ARLAgentManager::GetPotentialState(URLAgentComponent* Agent, int32
         case 2: // Turn right
             CurrentRot.Yaw += 15.f;
             break;
+        default:
+            break;
     }
 
     // Return simplified features [X, Y, ForwardX, ForwardY]
     FVector SimulatedForward = FRotator(0, CurrentRot.Yaw, 0).Vector();
     return {
-        CurrentLoc.X / 1000.f,
-        CurrentLoc.Y / 1000.f,
-        SimulatedForward.X,
-        SimulatedForward.Y
+        static_cast<float>(CurrentLoc.X / 1000.f),
+        static_cast<float>(CurrentLoc.Y / 1000.f),
+        static_cast<float>(SimulatedForward.X),
+        static_cast<float>(SimulatedForward.Y)
     };
 }
 
-TArray<float> ARLAgentManager::GetNextState(URLAgentComponent* Agent, int32 Action)
+float ARLAgentManager::GetSphereRadius()
 {
+    return G_SphereRadius;
+}
+
+void ARLAgentManager::SetSphereRadius(float NewRadius)
+{
+    G_SphereRadius = NewRadius;
+}
+
+TArray<float> ARLAgentManager::GetNextState(const URLAgentComponent* Agent, int32 Action)
+{
+    // always go through the getter so we’re sure we read the current
+    // G_SphereRadius (whether it was edited in editor or set at runtime).
+    const float Radius = GetSphereRadius();
+
     FVector Loc = Agent->GetOwner()->GetActorLocation();
-    
-    // Boundary check - keep agent within the sphere
-    if (Loc.Size() > SphereRadius)
+
+    // Boundary check
+    if (Loc.Size() > Radius)
     {
-        // Teleport back toward the center if agent goes outside the sphere
-        FVector Direction = -Loc.GetSafeNormal();
-        Loc = Direction * (SphereRadius * 0.8f);
+        FVector Dir = -Loc.GetSafeNormal();
+        Loc = Dir * (Radius * 0.8f);
         Agent->GetOwner()->SetActorLocation(Loc);
     }
 
@@ -202,13 +216,15 @@ TArray<float> ARLAgentManager::GetNextState(URLAgentComponent* Agent, int32 Acti
         case 2: // Turn right
             Agent->GetOwner()->AddActorLocalRotation(FRotator(0, 15, 0));
             break;
+        default:
+            break;
     }
     
     Agent->GetOwner()->SetActorLocation(Loc);
     return GetStateFeatures(Agent);
 }
 
-float ARLAgentManager::CalculateReward(URLAgentComponent* Agent, const TArray<float>& NextState)
+float ARLAgentManager::CalculateReward(const URLAgentComponent* Agent, const TArray<float>& NextState) const
 {
     // The main objective is to find the target object
     const FVector CurrentLocation = Agent->GetOwner()->GetActorLocation();
@@ -243,7 +259,7 @@ float ARLAgentManager::ComputeValue(const TArray<float>& Weights, const TArray<f
     return Sum;
 }
 
-void ARLAgentManager::TDUpdate(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState)
+void ARLAgentManager::TDUpdate(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const
 {
     // Get current state value
     float V_current = ComputeValue(Agent->ValueWeights, Agent->CurrentState.Features);
@@ -260,3 +276,4 @@ void ARLAgentManager::TDUpdate(URLAgentComponent* Agent, float Reward, const TAr
         Agent->ValueWeights[i] += LearningRate * Delta * Agent->CurrentState.Features[i];
     }
 }
+

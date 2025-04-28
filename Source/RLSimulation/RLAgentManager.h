@@ -75,23 +75,38 @@ private:
     float CurrentEpsilon = 1.f;
 
     /** Dimensionality of state features */
-    int32 NumStateFeatures = 6;
+    int32 NumStateFeatures = 4;
 
     /** Sample the environment to produce a feature vector */
-    TArray<float> GetStateFeatures(URLAgentComponent* Agent);
+    static TArray<float> GetStateFeatures(const URLAgentComponent* Agent);
 
     /** Execute agent Action and return new state */
-    TArray<float> GetNextState(URLAgentComponent* Agent, int32 Action);
+    static TArray<float> GetNextState(const URLAgentComponent* Agent, int32 Action);
 
     /** Reward function based on movement toward world origin */
-    float CalculateReward(URLAgentComponent* Agent, const TArray<float>& NextState);
+    float CalculateReward(const URLAgentComponent* Agent, const TArray<float>& NextState) const;
 
     /** Linear value estimation v(s)=w·x */
-    float ComputeValue(const TArray<float>& Weights, const TArray<float>& State);
+    static float ComputeValue(const TArray<float>& Weights, const TArray<float>& State);
 
     /** One TD(λ) update */
-    void TDUpdate(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState);
+    void TDUpdate(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const;
     
-    TArray<float> GetPotentialState(URLAgentComponent* Agent, int32 Action);
+    static TArray<float> GetPotentialState(const URLAgentComponent* Agent, int32 Action);
 
+public:
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="RL|Environment")
+    float SphereRadius_InEditor = 500.f;
+
+    /** Returns the global sphere radius. */
+    UFUNCTION(BlueprintPure, Category="RL|Environment")
+    static float GetSphereRadius();
+
+    /** Sets the global sphere radius. */
+    UFUNCTION(BlueprintCallable, Category="RL|Environment")
+    static void SetSphereRadius(float NewRadius);
+
+private:
+    
+    static float G_SphereRadius; // “real” storage of the radius
 };
