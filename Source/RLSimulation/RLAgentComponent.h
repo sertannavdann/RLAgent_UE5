@@ -1,23 +1,34 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "RLAgentManager.h"
 #include "GameFramework/SaveGame.h"
 #include "RLAgentComponent.generated.h"
 
 class ARLAgentManager;
-
+class URLParameterManager;
 
 // Struct to store state information
 USTRUCT(BlueprintType)
-struct FRLState
+struct FAgentState
 {
     GENERATED_BODY()
     
-    UPROPERTY(BlueprintReadWrite, Category = "Reinforcement Learning")
+    UPROPERTY(BlueprintReadWrite)
     TArray<float> Features;
+    
+    // Generate a unique string key for eligibility traces
+    FString GetKey() const
+    {
+        FString Result;
+        for (float Feature : Features)
+        {
+            Result += FString::Printf(TEXT("%.3f_"), Feature);
+        }
+        return Result;
+    }
 };
 
+// Save game object to cache trained agents
 UCLASS()
 class RLSIMULATION_API URLAgentSaveGame : public USaveGame
 {
@@ -37,7 +48,6 @@ public:
     FString AgentDescription;
 };
 
-// Save game object to cache trained agents
 UCLASS(ClassGroup=RL, meta=(BlueprintSpawnableComponent))
 class RLSIMULATION_API URLAgentComponent : public UActorComponent
 {
@@ -66,13 +76,27 @@ public:
     UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL")
     float CumulativeReward = 0.f;
 
-    /** Agent’s previous world location (for reward calculation) */
+    /** Agent's previous world location (for reward calculation) */
     UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL")
     FVector PreviousLocation;
 
     /** Assigned by manager */
     UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL")
     int32 AgentID = -1;
+    
+    /** Parameter manager for learning rates and eligibility traces */
+    UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL")
+    URLParameterManager* ParameterManager;
+    
+    /** Runtime stats for monitoring */
+    UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL|Stats")
+    int32 StepsTaken = 0;
+    
+    UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL|Stats")
+    int32 TargetsFound = 0;
+    
+    UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL|Stats")
+    TArray<float> RewardHistory;
 
 protected:
     virtual void BeginPlay() override;

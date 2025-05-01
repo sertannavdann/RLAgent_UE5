@@ -8,19 +8,26 @@ public class RLSimulation : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] {
-            "Core",
+		PublicDependencyModuleNames.AddRange([
+			"Core",
             "CoreUObject",
             "Engine",
             "InputCore",
             "EnhancedInput",
             "LearningAgents",
             "LearningAgentsTraining",
+            "UMG"
 
-        });
+		]);
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
-
+		// Add Slate and SlateCore for UI functionality
+		PrivateDependencyModuleNames.AddRange([
+			"Slate", 
+			"SlateCore",
+			"ApplicationCore",
+			"RenderCore",
+			"RHI"
+		]);
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 		
