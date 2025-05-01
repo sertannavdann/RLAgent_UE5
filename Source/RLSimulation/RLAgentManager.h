@@ -4,16 +4,7 @@
 #include "RLAgentManager.generated.h"
 
 class URLAgentComponent;
-
-USTRUCT(BlueprintType)
-struct FAgentState
-{
-    GENERATED_BODY()
-    
-    UPROPERTY(BlueprintReadWrite)
-    TArray<float> Features;
-};
-
+class URLParameterManager;
 
 UCLASS()
 class RLSIMULATION_API ARLAgentManager : public AActor
@@ -33,7 +24,6 @@ public:
     void RespawnTarget();
     
 public:
-    
     /** Called by agent components to register themselves */
     UFUNCTION(BlueprintCallable, Category="RL")
     int32 RegisterAgent(URLAgentComponent* Agent);
@@ -46,7 +36,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="RL")
     int32 GetNumStateFeatures() const { return NumStateFeatures; }
     
-    /** TD learning parameters */
+    /** TD learning parameters - kept for backward compatibility */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="RL")
     float LearningRate = 0.1f;
 
@@ -62,9 +52,26 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="RL")
     float EpsilonDecay = 0.995f;
+    
+    /** Enable/disable eligibility traces */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="RL|Advanced")
+    bool bUseEligibilityTraces = true;
+    
+    /** Type of eligibility traces */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="RL|Advanced")
+    bool bUseReplacingTraces = false;
+    
+    /** Parameter manager for global settings */
+    UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="RL")
+    URLParameterManager* GlobalParameterManager;
+    
+    /** Calculate TD error for an agent (for debugging) */
+    UFUNCTION(BlueprintCallable, Category="RL|Debugging")
+    float CalculateTDError(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const;
 
 protected:
     virtual void Tick(float DeltaTime) override;
+    virtual void BeginPlay() override;
 
 private:
     /** All registered agents */
@@ -89,7 +96,7 @@ private:
     /** Linear value estimation v(s)=w·x */
     static float ComputeValue(const TArray<float>& Weights, const TArray<float>& State);
 
-    /** One TD update */
+    /** One TD update with eligibility traces */
     void TDUpdate(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const;
     
     static TArray<float> GetPotentialState(const URLAgentComponent* Agent, int32 Action);
@@ -107,6 +114,10 @@ public:
     static void SetSphereRadius(float NewRadius);
 
 private:
+    static float G_SphereRadius; // "real" storage of the radius
     
-    static float G_SphereRadius; // “real” storage of the radius
+    // Performance monitoring for MacOS
+    double FrameStartTime = 0.0;
+    double TDUpdateTime = 0.0;
+    int32 UpdateCount = 0;
 };

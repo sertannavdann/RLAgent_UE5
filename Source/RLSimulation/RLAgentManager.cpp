@@ -1,6 +1,9 @@
 #include "RLAgentManager.h"
 #include "RLAgentComponent.h"
+#include "RLParameterManager.h"
 #include "DrawDebugHelpers.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 float ARLAgentManager::G_SphereRadius = 500.f;
 
@@ -18,12 +21,30 @@ ARLAgentManager::ARLAgentManager()
     
     // Simplified learning parameters
     InitialEpsilon = 0.3f;    // Less exploration
-    EpsilonDecay = 0.995f;    // Slower decay
+    EpsilonDecay = 0.999f;    // Slower decay
     LearningRate = 0.1f;      // Simple learning rate
     DiscountFactor = 0.9f;    // Standard discount
     
+    // Create parameter manager
+    GlobalParameterManager = CreateDefaultSubobject<URLParameterManager>(TEXT("ParameterManager"));
+    
     // Update NumStateFeatures to 6 for full 3D
     NumStateFeatures = 6;
+}
+
+void ARLAgentManager::BeginPlay()
+{
+    Super::BeginPlay();
+    
+    // Initialize the global parameter manager if needed
+    if (!GlobalParameterManager)
+    {
+        GlobalParameterManager = NewObject<URLParameterManager>(this);
+        GlobalParameterManager->RegisterComponent();
+    }
+    
+    // Set initial learning rate from the global parameter manager
+    LearningRate = GlobalParameterManager->InitialLearningRate;
 }
 
 void ARLAgentManager::RespawnTarget()
@@ -56,15 +77,34 @@ void ARLAgentManager::StartTraining()
 {
     CurrentEpsilon = InitialEpsilon;
     
+    // Reset eligibility traces for all agents
+    for (URLAgentComponent* Agent : Agents)
+    {
+        if (Agent->ParameterManager)
+        {
+            Agent->ParameterManager->ResetEligibilityTraces();
+        }
+    }
+    
     // Spawn a debug marker at the target position
     DrawDebugSphere(GetWorld(), TargetObjectPosition, 50.f, 8, FColor::Red, true);
+    
+    // Initialize performance monitoring
+    FrameStartTime = FPlatformTime::Seconds();
+    TDUpdateTime = 0.0;
+    UpdateCount = 0;
 }
 
 void ARLAgentManager::Tick(float DeltaTime)
 {
+    TRACE_CPUPROFILER_EVENT_SCOPE_STR("RL Agent Manager Tick");
+    
     Super::Tick(DeltaTime);
 
     if (Agents.Num() == 0) return;
+    
+    // Start measuring frame time
+    FrameStartTime = FPlatformTime::Seconds();
 
     for (URLAgentComponent* Agent : Agents)
     {
@@ -101,13 +141,24 @@ void ARLAgentManager::Tick(float DeltaTime)
         // 4. Calculate reward based on finding the target object
         float Reward = CalculateReward(Agent, NextFeatures);
 
-        // 5. Simple TD Update
+        // 5. TD Update with eligibility traces
+        double UpdateStartTime = FPlatformTime::Seconds();
         TDUpdate(Agent, Reward, NextFeatures);
+        TDUpdateTime += (FPlatformTime::Seconds() - UpdateStartTime);
+        UpdateCount++;
 
         // 6. Update state and bookkeeping
         Agent->CurrentState.Features = NextFeatures;
         Agent->CumulativeReward += Reward;
         Agent->PreviousLocation = Agent->GetOwner()->GetActorLocation();
+        Agent->StepsTaken++;
+        
+        // Update reward history for monitoring
+        if (Agent->RewardHistory.Num() > 0)
+        {
+            Agent->RewardHistory.RemoveAt(0);
+            Agent->RewardHistory.Add(Reward);
+        }
 
         // 7. Draw value above agent for debugging
         float Val = ComputeValue(Agent->ValueWeights, NextFeatures);
@@ -122,7 +173,14 @@ void ARLAgentManager::Tick(float DeltaTime)
         {
             // Agent found the target! Give big reward and respawn target
             Agent->CumulativeReward += 50.f;
+            Agent->TargetsFound++;
             RespawnTarget();
+            
+            // Reset eligibility traces for new episode
+            if (Agent->ParameterManager)
+            {
+                Agent->ParameterManager->ResetEligibilityTraces();
+            }
         }
     }
 
@@ -134,6 +192,22 @@ void ARLAgentManager::Tick(float DeltaTime)
     
     // Draw the target object
     DrawDebugSphere(GetWorld(), TargetObjectPosition, 50.f, 8, FColor::Red, false, -1, 0, 5.0f);
+    
+    // Performance monitoring on screen
+    if (UpdateCount > 0 && (UpdateCount % 100 == 0))
+    {
+        float AvgUpdateTime = TDUpdateTime / UpdateCount * 1000.0f; // Convert to ms
+        FString DebugText = FString::Printf(TEXT("Avg TD Update: %.3f ms | Epsilon: %.3f"), 
+                                           AvgUpdateTime, CurrentEpsilon);
+        UKismetSystemLibrary::PrintString(GetWorld(), DebugText, true, false, FLinearColor::Yellow, 2.0f);
+        
+        // Reset counters periodically
+        if (UpdateCount >= 1000)
+        {
+            TDUpdateTime = 0.0;
+            UpdateCount = 0;
+        }
+    }
 }
 
 TArray<float> ARLAgentManager::GetStateFeatures(const URLAgentComponent* Agent)
@@ -162,19 +236,19 @@ TArray<float> ARLAgentManager::GetPotentialState(const URLAgentComponent* Agent,
     switch(Action)
     {
         case 0: // Move forward
-            CurrentLoc += CurrentRot.Vector() * 10.f;
+            CurrentLoc += CurrentRot.Vector() * 100.f;
             break;
         case 1: // Turn left
-            CurrentRot.Yaw -= 1.5f;
+            CurrentRot.Yaw -= 15.f;
             break;
         case 2: // Turn right
-            CurrentRot.Yaw += 1.5f;
+            CurrentRot.Yaw += 15.f;
             break;
         case 3: // Move up
-            CurrentLoc.Z += 10.f;
+            CurrentLoc.Z += 100.f;
             break;
         case 4: // Move down
-            CurrentLoc.Z -= 10.f;
+            CurrentLoc.Z -= 100.f;
             break;
         default:
             break;
@@ -280,18 +354,85 @@ float ARLAgentManager::ComputeValue(const TArray<float>& Weights, const TArray<f
 
 void ARLAgentManager::TDUpdate(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const
 {
+    TRACE_CPUPROFILER_EVENT_SCOPE_STR("TD Learning With Eligibility Traces");
+    
     // Get current state value
-    const float V_Current = ComputeValue(Agent->ValueWeights, Agent->CurrentState.Features);
+    float V_current = ComputeValue(Agent->ValueWeights, Agent->CurrentState.Features);
     
     // Get next state value
-        const float V_Next = ComputeValue(Agent->ValueWeights, NextState);
+    float V_next = ComputeValue(Agent->ValueWeights, NextState);
     
     // Calculate TD error
-    const float Delta = Reward + DiscountFactor * V_Next - V_Current;
-
-    // Update weights directly
-    for (int32 i = 0; i < Agent->ValueWeights.Num(); i++)
+    float Delta = Reward + DiscountFactor * V_next - V_current;
+    
+    // Use parameters from the agent's parameter manager or fall back to global
+    URLParameterManager* ParamManager = Agent->ParameterManager ? Agent->ParameterManager : GlobalParameterManager;
+    
+    if (ParamManager && bUseEligibilityTraces)
     {
-        Agent->ValueWeights[i] += LearningRate * Delta * Agent->CurrentState.Features[i];
+        // Update eligibility traces
+        TArray<FString> StateKeys;
+        StateKeys.Add(FAgentState{Agent->CurrentState.Features}.GetKey());
+        
+        // Update traces (either accumulating or replacing)
+        ParamManager->UpdateEligibilityTraces(StateKeys, bUseReplacingTraces);
+        
+        // Get the current learning rate from parameter manager
+        float CurrentLearningRate = ParamManager->GetCurrentLearningRate();
+        
+        // Update all weights based on eligibility traces
+        for (int32 i = 0; i < Agent->ValueWeights.Num(); i++)
+        {
+            // For simplicity, we directly update eligibility traces for the feature vector
+            if (i < Agent->EligibilityTraces.Num())
+            {
+                if (bUseReplacingTraces)
+                {
+                    // Replacing traces
+                    Agent->EligibilityTraces[i] = (i < Agent->CurrentState.Features.Num()) ? 
+                        Agent->CurrentState.Features[i] : 0.0f;
+                }
+                else
+                {
+                    // Accumulating traces
+                    Agent->EligibilityTraces[i] = Lambda * DiscountFactor * Agent->EligibilityTraces[i];
+                    if (i < Agent->CurrentState.Features.Num())
+                    {
+                        Agent->EligibilityTraces[i] += Agent->CurrentState.Features[i];
+                    }
+                }
+                
+                // Update weight using eligibility trace
+                Agent->ValueWeights[i] += CurrentLearningRate * Delta * Agent->EligibilityTraces[i];
+            }
+        }
+        
+        // Adjust learning rate if adaptive learning is enabled
+        ParamManager->AdjustLearningRate(Delta);
     }
+    else
+    {
+        // Legacy update without eligibility traces
+        for (int32 i = 0; i < Agent->ValueWeights.Num(); i++)
+        {
+            if (i < Agent->CurrentState.Features.Num())
+            {
+                Agent->ValueWeights[i] += LearningRate * Delta * Agent->CurrentState.Features[i];
+            }
+        }
+    }
+}
+
+float ARLAgentManager::CalculateTDError(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const
+{
+    if (!Agent) return 0.0f;
+    
+    // Calculate current state value
+    float V_current = ComputeValue(Agent->ValueWeights, Agent->CurrentState.Features);
+    
+    // Calculate next state value
+    float V_next = ComputeValue(Agent->ValueWeights, NextState);
+    
+    // Return TD error
+    return Reward + DiscountFactor * V_next - V_current;
 }
