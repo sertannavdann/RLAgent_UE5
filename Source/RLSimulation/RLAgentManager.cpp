@@ -3,7 +3,6 @@
 #include "RLParameterManager.h"
 #include "DrawDebugHelpers.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
-#include "Kismet/KismetSystemLibrary.h"
 
 float ARLAgentManager::G_SphereRadius = 500.f;
 
@@ -189,23 +188,35 @@ void ARLAgentManager::Tick(float DeltaTime)
     
     // Draw the training area - 3D sphere
     DrawDebugSphere(GetWorld(), FVector::ZeroVector, SphereRadius, 24, FColor::Green, false, -1, 0, 2.0f);
-    
+
+    // Add soft boundary visualization
+    DrawDebugSphere(GetWorld(), FVector::ZeroVector, SphereRadius * 0.85f, 16, FColor(0, 200, 0, 64), false, -1, 0, 1.0f);
+
     // Draw the target object
     DrawDebugSphere(GetWorld(), TargetObjectPosition, 50.f, 8, FColor::Red, false, -1, 0, 5.0f);
-    
-    // Performance monitoring on screen
-    if (UpdateCount > 0 && (UpdateCount % 100 == 0))
+
+    // Visualize any agent collisions with boundary
+    for (URLAgentComponent* Agent : Agents)
     {
-        float AvgUpdateTime = TDUpdateTime / UpdateCount * 1000.0f; // Convert to ms
-        FString DebugText = FString::Printf(TEXT("Avg TD Update: %.3f ms | Epsilon: %.3f"), 
-                                           AvgUpdateTime, CurrentEpsilon);
-        UKismetSystemLibrary::PrintString(GetWorld(), DebugText, true, false, FLinearColor::Yellow, 2.0f);
-        
-        // Reset counters periodically
-        if (UpdateCount >= 1000)
+        FVector AgentLoc = Agent->GetOwner()->GetActorLocation();
+        float DistanceFromCenter = AgentLoc.Size();
+    
+        // If agent is near boundary, draw indicator
+        if (DistanceFromCenter > SphereRadius * 0.95f)
         {
-            TDUpdateTime = 0.0;
-            UpdateCount = 0;
+            // Draw normal vector at collision point
+            FVector Normal = -AgentLoc.GetSafeNormal();
+            DrawDebugDirectionalArrow(
+                GetWorld(),
+                AgentLoc,
+                AgentLoc + Normal * 50.f,
+                10.f,
+                FColor::Yellow,
+                false,
+                0.05f,
+                0,
+                2.0f
+            );
         }
     }
 }
@@ -281,39 +292,49 @@ TArray<float> ARLAgentManager::GetNextState(const URLAgentComponent* Agent, int3
     // Get the current sphere radius
     const float Radius = GetSphereRadius();
 
+    // Get current location and apply action
     FVector Loc = Agent->GetOwner()->GetActorLocation();
-
-    // 3D Boundary check
-    if (Loc.Size() > Radius)
-    {
-        FVector Dir = -Loc.GetSafeNormal();
-        Loc = Dir * (Radius * 0.8f);
-        Agent->GetOwner()->SetActorLocation(Loc);
-    }
-
+    FVector OriginalLoc = Loc; // Store original location for boundary check
+    
     // Apply action directly in 3D
     switch(Action)
     {
-        case 0: // Move forward
-            Loc += Agent->GetOwner()->GetActorForwardVector() * 100.f;
-            break;
-        case 1: // Turn left
-            Agent->GetOwner()->AddActorLocalRotation(FRotator(0, -15, 0));
-            break;
-        case 2: // Turn right
-            Agent->GetOwner()->AddActorLocalRotation(FRotator(0, 15, 0));
-            break;
-        case 3: // Move up
-            Loc.Z += 100.f;
-            break;
-        case 4: // Move down
-            Loc.Z -= 100.f;
-            break;
-        default:
-            break;
+    case 0: // Move forward
+        Loc += Agent->GetOwner()->GetActorForwardVector() * 100.f;
+        break;
+    case 1: // Turn left
+        Agent->GetOwner()->AddActorLocalRotation(FRotator(0, -15, 0));
+        break;
+    case 2: // Turn right
+        Agent->GetOwner()->AddActorLocalRotation(FRotator(0, 15, 0));
+        break;
+    case 3: // Move up
+        Loc.Z += 100.f;
+        break;
+    case 4: // Move down
+        Loc.Z -= 100.f;
+        break;
+    default:
+        break;
     }
     
+    // Improved boundary check - keep agent at boundary instead of teleporting inward
+    if (Loc.Size() > Radius)
+    {
+        // Get direction vector from center to new location
+        FVector Dir = Loc.GetSafeNormal();
+        
+        // Place exactly at boundary
+        Loc = Dir * Radius;
+        
+        // Visual feedback of hitting boundary (optional)
+        DrawDebugPoint(Agent->GetOwner()->GetWorld(), Loc, 10.f, FColor::Yellow, false, 0.5f);
+    }
+    
+    // Set new location
     Agent->GetOwner()->SetActorLocation(Loc);
+    
+    // Return state features
     return GetStateFeatures(Agent);
 }
 
@@ -334,8 +355,25 @@ float ARLAgentManager::CalculateReward(const URLAgentComponent* Agent, const TAr
     // Small penalty for being far from target (to encourage exploration toward target)
     float DistancePenalty = -DistanceToTarget / 5000.f;
     
-    // Boundary penalty to keep agent inside sphere
-    float BoundaryPenalty = (CurrentLocation.Size() > SphereRadius * 0.9f) ? -1.f : 0.f;
+    // Improved boundary penalty - gradual increase as agent gets closer to boundary
+    float DistanceFromCenter = CurrentLocation.Size();
+    float BoundaryPenalty = 0.0f;
+    
+    const float SoftBoundaryStart = SphereRadius * 0.85f; // Start penalty at 85% of radius
+    if (DistanceFromCenter > SoftBoundaryStart)
+    {
+        // Calculate how close to boundary (0.0 to 1.0)
+        float BoundaryCloseness = FMath::Clamp((DistanceFromCenter - SoftBoundaryStart) / (SphereRadius - SoftBoundaryStart), 0.0f, 1.0f);
+        
+        // Apply exponentially increasing penalty
+        BoundaryPenalty = -BoundaryCloseness * BoundaryCloseness * 2.0f;
+        
+        // Visualization for debugging (optional)
+        if (BoundaryCloseness > 0.9f)
+        {
+            DrawDebugPoint(GetWorld(), CurrentLocation, 5.f, FColor::Red, false, 0.1f);
+        }
+    }
     
     // Big reward if very close to target (will be detected in Tick)
     float FoundTargetReward = (DistanceToTarget < 100.f) ? 10.f : 0.f;

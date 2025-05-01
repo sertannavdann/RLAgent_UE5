@@ -69,14 +69,15 @@ public:
     UFUNCTION(BlueprintCallable, Category="RL|Debugging")
     float CalculateTDError(URLAgentComponent* Agent, float Reward, const TArray<float>& NextState) const;
 
+    /** All registered agents */
+    UPROPERTY(BlueprintReadOnly)
+    TArray<URLAgentComponent*> Agents;
+    
 protected:
     virtual void Tick(float DeltaTime) override;
     virtual void BeginPlay() override;
 
 private:
-    /** All registered agents */
-    UPROPERTY()
-    TArray<URLAgentComponent*> Agents;
 
     /** Current exploration rate */
     float CurrentEpsilon = 1.f;
